@@ -13,7 +13,7 @@ jobs:
         with:
           python-version: '3.11'
       - name: Install
-        run: pip install python-telegram-bot==20.7 google-generativeai
+        run: pip install python-telegram-bot==20.7 google-genai
       - name: Run Bot
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
