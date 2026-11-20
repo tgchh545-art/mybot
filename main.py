@@ -1,4 +1,5 @@
 import os
+import re
 import requests
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
@@ -7,24 +8,35 @@ TOKEN = os.getenv("BOT_TOKEN")
 GROQ_KEY = os.getenv("GROQ_KEY")
 ALLOWED_ID = 6345411422
 
-print("GROQ_KEY موجود؟", bool(GROQ_KEY))
-if GROQ_KEY:
-    print("بداية المفتاح:", GROQ_KEY[:7])
+COMPETITION_MODE = {}
 
+def normalize_for_search(text):
+    if not text:
+        return ""
+    text = re.sub(r'[\u064B-\u0652]', '', text)
+    text = text.replace("أ", "ا").replace("إ", "ا").replace("آ", "ا")
+    text = text.replace("ة", "ه").replace("ى", "ي")
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
+
+# الأجوبة هنا مكتوبة بالـ ة الصحيحة، لا تغيرها
 OFFLINE = {
-    "السعودية": "الرياض",
-    "السعوديه": "الرياض",
+    "السعودية": "السعودية",
+    "السعوديه": "السعودية",
     "عاصمة السعودية": "الرياض",
     "عاصمه الدوله السعوديه": "الرياض",
     "ماهيه عاصمه الدوله السعوديه": "الرياض",
     "العراق": "بغداد",
+    "عاصمة العراق": "بغداد",
     "فرنسا": "باريس",
+    "عاصمة فرنسا": "باريس",
     "مصر": "القاهرة",
+    "عاصمة مصر": "القاهرة",
     "سوريا": "دمشق",
-    "الاردن": "عمان",
+    "الاردن": "الأردن",
     "الكويت": "الكويت",
     "قطر": "الدوحة",
-    "الامارات": "أبوظبي",
+    "الامارات": "الإمارات",
     "تركيا": "أنقرة",
     "امريكا": "واشنطن",
     "بريطانيا": "لندن",
@@ -36,14 +48,22 @@ OFFLINE = {
 def load_questions():
     qs = {}
     try:
-        f = open("questions.txt", encoding="utf-8")
-        for line in f:
-            if "|" in line:
-                parts = line.strip().split("|", 1)
-                qs[parts[0].strip()] = parts[1].strip()
-        f.close()
-    except:
+        with open("questions.txt", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                if "|" in line:
+                    parts = line.split("|", 1)
+                    q = parts[0].strip()
+                    a = parts[1].strip()
+                    if q and a:
+                        key = normalize_for_search(q)
+                        qs[key] = a
+    except FileNotFoundError:
         pass
+    except Exception as e:
+        print("load_questions error: " + str(e))
     return qs
 
 QUESTIONS = load_questions()
@@ -57,72 +77,78 @@ async def check(update: Update):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check(update):
         return
-    txt = "بوت مرتضى جاهز - GROQ موجود؟ " + str(bool(GROQ_KEY))
-    await update.message.reply_text(txt)
+    await update.message.reply_text("بوت مرتضى - وضع المسابقات الدقيق\n\n/مسابقة - تشغيل وضع المسابقات\n/عادي - إيقاف وضع المسابقات")
+
+async def comp_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check(update):
+        return
+    COMPETITION_MODE[update.effective_user.id] = True
+    await update.message.reply_text("تم تشغيل وضع المسابقات الدقيق - الجواب راح يطلع بالضبط بالـ ة والـ ه الصحيحة")
+
+async def comp_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check(update):
+        return
+    COMPETITION_MODE[update.effective_user.id] = False
+    await update.message.reply_text("تم إيقاف وضع المسابقات")
 
 def ask_groq(question):
     if not GROQ_KEY:
-        return "GROQ_KEY فارغ"
-    last_err = ""
-    for model in ["openai/gpt-oss-120b", "llama-3.1-8b-instant", "llama-3.3-70b-versatile"]:
+        return None
+    for model in ["openai/gpt-oss-120b", "llama-3.1-8b-instant"]:
         try:
             url = "https://api.groq.com/openai/v1/chat/completions"
             head = {"Authorization": "Bearer " + GROQ_KEY.strip(), "Content-Type": "application/json"}
-            msg_text = "جاوب بجواب واحد قصير ومباشر فقط بالعربي. السؤال: " + question
-            body = {"model": model, "messages": [{"role": "user", "content": msg_text}], "temperature": 0.1}
+            prompt = "انت بوت مسابقات دقيق جدا. جاوب بكلمة واحدة فقط. مهم جدا: حافظ على التاء المربوطة ة والهاء ه كما هي، لا تبدل بينهما. مثلا اكتب السعودية بالتاء المربوطة ة وليس السعوديه بالهاء. اكتب القاهرة بالتاء المربوطة. لا تضع حركات. السؤال: " + question
+            body = {"model": model, "messages": [{"role": "user", "content": prompt}], "temperature": 0.0}
             r = requests.post(url, headers=head, json=body, timeout=30)
-            print("Groq model " + model + " status " + str(r.status_code))
-            print(r.text[:400])
             if r.status_code == 200:
                 data = r.json()
-                return data["choices"][0]["message"]["content"].strip()
-            last_err = "Groq " + str(r.status_code) + " - " + r.text[:200]
+                ans = data["choices"][0]["message"]["content"].strip()
+                ans = ans.split("\n")[0].strip()
+                ans = re.sub(r'[\u064B-\u0652]', '', ans)
+                return ans
         except Exception as e:
-            last_err = "Groq fail " + str(e)
-    return "ERROR: " + last_err
-
-def ask_pollinations(question):
-    try:
-        r = requests.post(
-            "https://text.pollinations.ai/openai",
-            json={"model": "openai", "messages": [{"role": "user", "content": "جاوب بجواب واحد قصير بالعربي: " + question}]},
-            timeout=30
-        )
-        if r.status_code == 200:
-            data = r.json()
-            return data["choices"][0]["message"]["content"].strip()
-    except Exception as e:
-        print("Polli fail " + str(e))
+            print("Groq fail: " + str(e))
+            continue
     return None
 
 async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check(update):
         return
-    msg = update.message.text.strip()
+    msg_raw = update.message.text.strip()
+    if not msg_raw:
+        return
+    msg_search = normalize_for_search(msg_raw)
+    is_comp = COMPETITION_MODE.get(update.effective_user.id, False)
+
     for key in OFFLINE:
-        if key in msg:
-            await update.message.reply_text("الجواب: " + OFFLINE[key])
+        if normalize_for_search(key) in msg_search:
+            await update.message.reply_text(OFFLINE[key])
             return
-    if msg in QUESTIONS:
-        await update.message.reply_text("الجواب: " + QUESTIONS[msg])
+
+    if msg_search in QUESTIONS:
+        await update.message.reply_text(QUESTIONS[msg_search])
         return
+
     for q in QUESTIONS:
-        if msg in q or q in msg:
-            await update.message.reply_text("الجواب: " + QUESTIONS[q])
+        if msg_search in q or q in msg_search:
+            await update.message.reply_text(QUESTIONS[q])
             return
-    await update.message.reply_text("سؤال جديد، دا أسأل الذكاء...")
-    ans = ask_groq(msg)
-    if ans and not ans.startswith("ERROR"):
-        await update.message.reply_text("جواب الذكاء: " + ans)
-        return
-    print("Groq failed, trying Pollinations")
-    ans2 = ask_pollinations(msg)
-    if ans2:
-        await update.message.reply_text("جواب الذكاء: " + ans2)
-        return
-    await update.message.reply_text("الخطأ الحقيقي: " + str(ans))
+
+    if not is_comp:
+        await update.message.reply_text("سؤال جديد، دا أسأل الذكاء...")
+    ans = ask_groq(msg_raw)
+    if ans:
+        if is_comp:
+            await update.message.reply_text(ans)
+        else:
+            await update.message.reply_text("جواب الذكاء: " + ans)
+    else:
+        await update.message.reply_text("ما لقيت جواب")
 
 app = ApplicationBuilder().token(TOKEN).build()
 app.add_handler(CommandHandler("start", start))
+app.add_handler(CommandHandler("مسابقة", comp_on))
+app.add_handler(CommandHandler("عادي", comp_off))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, answer))
 app.run_polling()
