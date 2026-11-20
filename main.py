@@ -1,5 +1,5 @@
-import os, re
-import google.generativeai as genai
+import os
+from google import genai
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
@@ -7,9 +7,7 @@ TOKEN = os.getenv("BOT_TOKEN")
 GEMINI_KEY = os.getenv("GEMINI_KEY")
 ALLOWED_ID = 6345411422
 
-if GEMINI_KEY:
-    genai.configure(api_key=GEMINI_KEY)
-    model = genai.GenerativeModel("gemini-1.5-flash")
+client = genai.Client(api_key=GEMINI_KEY) if GEMINI_KEY else None
 
 def load_questions():
     qs = {}
@@ -47,11 +45,10 @@ async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
     await update.message.reply_text("🤔 سؤال جديد، دا أسأل الذكاء...")
     try:
-        prompt = f"جاوب بجواب واحد قصير ومباشر، بدون شرح طويل. السؤال: {msg}"
-        resp = model.generate_content(prompt)
+        resp = client.models.generate_content(model="gemini-2.0-flash", contents=f"جاوب بجواب واحد قصير ومباشر، بدون شرح طويل. السؤال: {msg}")
         await update.message.reply_text(f"🤖 جواب الذكاء: {resp.text.strip()}")
-    except:
-        await update.message.reply_text("❌ خطأ بالذكاء، تأكد من GEMINI_KEY")
+    except Exception as e:
+        await update.message.reply_text(f"❌ خطأ بالذكاء: {e}")
 
 app = ApplicationBuilder().token(TOKEN).build()
 app.add_handler(CommandHandler("start", start))
