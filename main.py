@@ -7,7 +7,12 @@ TOKEN = os.getenv("BOT_TOKEN")
 GEMINI_KEY = os.getenv("GEMINI_KEY")
 ALLOWED_ID = 6345411422
 
-client = genai.Client(api_key=GEMINI_KEY) if GEMINI_KEY else None
+client = None
+if GEMINI_KEY:
+    try:
+        client = genai.Client(api_key=GEMINI_KEY.strip())
+    except:
+        client = None
 
 def load_questions():
     qs = {}
@@ -16,7 +21,8 @@ def load_questions():
             for line in f:
                 if "|" in line:
                     q, a = line.strip().split("|", 1)
-                    qs[q.strip()] = a.strip()
+                    if q.strip() and a.strip():
+                        qs[q.strip()] = a.strip()
     except:
         pass
     return qs
@@ -33,22 +39,38 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check(update): return
     await update.message.reply_text(f"🔥 بوت مرتضى الذكي جاهز\nعندي {len(QUESTIONS)} سؤال محفوظ + ذكاء لأي سؤال جديد")
 
+async def ask_ai(question: str):
+    for model_name in ["gemini-3.8-flash", "gemini-3-flash", "gemini-2.5-flash"]:
+        try:
+            resp = client.models.generate_content(
+                model=model_name,
+                contents=f"انت بوت مسابقات دردشة عربية. جاوب بجواب واحد قصير ومباشر فقط، بدون شرح طويل. السؤال: {question}"
+            )
+            if resp.text:
+                return resp.text.strip()
+        except:
+            continue
+    return None
+
 async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check(update): return
     msg = update.message.text.strip()
     if msg in QUESTIONS:
-        await update.message.reply_text(f"✅ الجواب: {QUESTIONS[msg]}")
+        await update.message.reply_text(f"✅ الجواب من ملف الاسئلة: {QUESTIONS[msg]}")
         return
     for q, a in QUESTIONS.items():
         if msg in q or q in msg:
             await update.message.reply_text(f"✅ الجواب: {a}")
             return
+    if not client:
+        await update.message.reply_text("❌ مفتاح GEMINI_KEY مو موجود")
+        return
     await update.message.reply_text("🤔 سؤال جديد، دا أسأل الذكاء...")
-    try:
-        resp = client.models.generate_content(model="gemini-2.0-flash", contents=f"جاوب بجواب واحد قصير ومباشر، بدون شرح طويل. السؤال: {msg}")
-        await update.message.reply_text(f"🤖 جواب الذكاء: {resp.text.strip()}")
-    except Exception as e:
-        await update.message.reply_text(f"❌ خطأ بالذكاء: {e}")
+    ans = await ask_ai(msg)
+    if ans:
+        await update.message.reply_text(f"🤖 جواب الذكاء: {ans}")
+    else:
+        await update.message.reply_text("❌ الذكاء ما رد")
 
 app = ApplicationBuilder().token(TOKEN).build()
 app.add_handler(CommandHandler("start", start))
