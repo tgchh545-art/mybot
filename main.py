@@ -1,4 +1,4 @@
-import os, requests, urllib.parse
+import os, requests, urllib.parse, json
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
@@ -28,25 +28,54 @@ async def check(update: Update):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check(update): return
-    await update.message.reply_text(f"🔥 بوت مرتضى الذكي جاهز\nعندي {len(QUESTIONS)} سؤال محفوظ + ذكاء لأي سؤال جديد\n\nدزلي أي سؤال")
+    await update.message.reply_text(f"🔥 بوت مرتضى الذكي جاهز\nعندي {len(QUESTIONS)} سؤال محفوظ + ذكاء لأي سؤال جديد")
 
 def ask_ai(question: str):
+    # مصدر 1: Pollinations POST - أقوى
     try:
-        # ذكاء مجاني بدون مفتاح
-        prompt = f"جاوب بجواب واحد قصير ومباشر فقط بالعربي، بدون شرح طويل. السؤال: {question}"
-        url = "https://text.pollinations.ai/" + urllib.parse.quote(prompt)
-        r = requests.get(url, timeout=30)
-        if r.status_code == 200 and r.text.strip():
-            return r.text.strip()[:1000]
+        r = requests.post(
+            "https://text.pollinations.ai/openai",
+            json={
+                "model": "openai",
+                "messages": [{"role": "user", "content": f"جاوب بجواب واحد قصير ومباشر فقط بالعربي، بدون شرح. السؤال: {question}"}]
+            },
+            timeout=30
+        )
+        if r.status_code == 200:
+            data = r.json()
+            ans = data["choices"][0]["message"]["content"].strip()
+            if ans:
+                return ans
     except Exception as e:
-        print("AI Error:", e)
+        print("AI1 fail", e)
+
+    # مصدر 2: Pollinations GET - احتياط
+    try:
+        url = "https://text.pollinations.ai/" + urllib.parse.quote(f"جاوب بجواب قصير: {question}")
+        r = requests.get(url, timeout=30, headers={"User-Agent": "Mozilla/5.0"})
+        if r.status_code == 200 and r.text.strip():
+            return r.text.strip()[:500]
+    except Exception as e:
+        print("AI2 fail", e)
+
+    # مصدر 3: ويكيبيديا - للعواصم والدول
+    try:
+        r = requests.get(
+            "https://ar.wikipedia.org/api/rest_v1/page/summary/" + urllib.parse.quote(question),
+            timeout=15, headers={"User-Agent": "Bot/1.0"}
+        )
+        if r.status_code == 200:
+            d = r.json()
+            if d.get("extract"):
+                return d["extract"][:400]
+    except:
+        pass
+
     return None
 
 async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check(update): return
     msg = update.message.text.strip()
-
-    # 1 - من ملف الاسئلة
     if msg in QUESTIONS:
         await update.message.reply_text(f"✅ الجواب من ملف الاسئلة: {QUESTIONS[msg]}")
         return
@@ -54,8 +83,6 @@ async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if msg in q or q in msg:
             await update.message.reply_text(f"✅ الجواب: {a}")
             return
-
-    # 2 - ذكاء مجاني
     await update.message.reply_text("🤔 سؤال جديد، دا أسأل الذكاء...")
     ans = ask_ai(msg)
     if ans:
