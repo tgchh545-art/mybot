@@ -1,18 +1,9 @@
-import os
-from google import genai
+import os, requests, urllib.parse
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
 TOKEN = os.getenv("BOT_TOKEN")
-GEMINI_KEY = os.getenv("GEMINI_KEY")
 ALLOWED_ID = 6345411422
-
-client = None
-if GEMINI_KEY:
-    try:
-        client = genai.Client(api_key=GEMINI_KEY.strip())
-    except:
-        client = None
 
 def load_questions():
     qs = {}
@@ -37,24 +28,25 @@ async def check(update: Update):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check(update): return
-    await update.message.reply_text(f"🔥 بوت مرتضى الذكي جاهز\nعندي {len(QUESTIONS)} سؤال محفوظ + ذكاء لأي سؤال جديد")
+    await update.message.reply_text(f"🔥 بوت مرتضى الذكي جاهز\nعندي {len(QUESTIONS)} سؤال محفوظ + ذكاء لأي سؤال جديد\n\nدزلي أي سؤال")
 
-async def ask_ai(question: str):
-    for model_name in ["gemini-3.8-flash", "gemini-3-flash", "gemini-2.5-flash"]:
-        try:
-            resp = client.models.generate_content(
-                model=model_name,
-                contents=f"انت بوت مسابقات دردشة عربية. جاوب بجواب واحد قصير ومباشر فقط، بدون شرح طويل. السؤال: {question}"
-            )
-            if resp.text:
-                return resp.text.strip()
-        except:
-            continue
+def ask_ai(question: str):
+    try:
+        # ذكاء مجاني بدون مفتاح
+        prompt = f"جاوب بجواب واحد قصير ومباشر فقط بالعربي، بدون شرح طويل. السؤال: {question}"
+        url = "https://text.pollinations.ai/" + urllib.parse.quote(prompt)
+        r = requests.get(url, timeout=30)
+        if r.status_code == 200 and r.text.strip():
+            return r.text.strip()[:1000]
+    except Exception as e:
+        print("AI Error:", e)
     return None
 
 async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check(update): return
     msg = update.message.text.strip()
+
+    # 1 - من ملف الاسئلة
     if msg in QUESTIONS:
         await update.message.reply_text(f"✅ الجواب من ملف الاسئلة: {QUESTIONS[msg]}")
         return
@@ -62,15 +54,14 @@ async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if msg in q or q in msg:
             await update.message.reply_text(f"✅ الجواب: {a}")
             return
-    if not client:
-        await update.message.reply_text("❌ مفتاح GEMINI_KEY مو موجود")
-        return
+
+    # 2 - ذكاء مجاني
     await update.message.reply_text("🤔 سؤال جديد، دا أسأل الذكاء...")
-    ans = await ask_ai(msg)
+    ans = ask_ai(msg)
     if ans:
         await update.message.reply_text(f"🤖 جواب الذكاء: {ans}")
     else:
-        await update.message.reply_text("❌ الذكاء ما رد")
+        await update.message.reply_text("❌ الذكاء ما رد، جرب مرة ثانية")
 
 app = ApplicationBuilder().token(TOKEN).build()
 app.add_handler(CommandHandler("start", start))
