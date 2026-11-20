@@ -7,6 +7,10 @@ TOKEN = os.getenv("BOT_TOKEN")
 GROQ_KEY = os.getenv("GROQ_KEY")
 ALLOWED_ID = 6345411422
 
+print("GROQ_KEY موجود؟", bool(GROQ_KEY))
+if GROQ_KEY:
+    print("بداية المفتاح:", GROQ_KEY[:7])
+
 OFFLINE = {
     "السعودية": "الرياض",
     "السعوديه": "الرياض",
@@ -53,25 +57,42 @@ async def check(update: Update):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check(update):
         return
-    txt = "بوت مرتضى الذكي جاهز - عندي " + str(len(QUESTIONS)) + " سؤال + ذكاء لأي سؤال جديد"
+    txt = "بوت مرتضى جاهز - GROQ موجود؟ " + str(bool(GROQ_KEY))
     await update.message.reply_text(txt)
 
 def ask_groq(question):
     if not GROQ_KEY:
-        return None
+        return "GROQ_KEY فارغ"
+    last_err = ""
+    for model in ["openai/gpt-oss-120b", "llama-3.1-8b-instant", "llama-3.3-70b-versatile"]:
+        try:
+            url = "https://api.groq.com/openai/v1/chat/completions"
+            head = {"Authorization": "Bearer " + GROQ_KEY.strip(), "Content-Type": "application/json"}
+            msg_text = "جاوب بجواب واحد قصير ومباشر فقط بالعربي. السؤال: " + question
+            body = {"model": model, "messages": [{"role": "user", "content": msg_text}], "temperature": 0.1}
+            r = requests.post(url, headers=head, json=body, timeout=30)
+            print("Groq model " + model + " status " + str(r.status_code))
+            print(r.text[:400])
+            if r.status_code == 200:
+                data = r.json()
+                return data["choices"][0]["message"]["content"].strip()
+            last_err = "Groq " + str(r.status_code) + " - " + r.text[:200]
+        except Exception as e:
+            last_err = "Groq fail " + str(e)
+    return "ERROR: " + last_err
+
+def ask_pollinations(question):
     try:
-        url = "https://api.groq.com/openai/v1/chat/completions"
-        head = {"Authorization": "Bearer " + GROQ_KEY.strip(), "Content-Type": "application/json"}
-        msg_text = "جاوب بجواب واحد قصير ومباشر فقط بالعربي. السؤال: " + question
-        body = {"model": "llama-3.3-70b-versatile", "messages": [{"role": "user", "content": msg_text}], "temperature": 0.1}
-        r = requests.post(url, headers=head, json=body, timeout=30)
+        r = requests.post(
+            "https://text.pollinations.ai/openai",
+            json={"model": "openai", "messages": [{"role": "user", "content": "جاوب بجواب واحد قصير بالعربي: " + question}]},
+            timeout=30
+        )
         if r.status_code == 200:
             data = r.json()
-            ans = data["choices"][0]["message"]["content"]
-            return ans.strip()
-        print("GROQ Error " + r.text[:300])
+            return data["choices"][0]["message"]["content"].strip()
     except Exception as e:
-        print("GROQ fail " + str(e))
+        print("Polli fail " + str(e))
     return None
 
 async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -91,10 +112,15 @@ async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
     await update.message.reply_text("سؤال جديد، دا أسأل الذكاء...")
     ans = ask_groq(msg)
-    if ans:
+    if ans and not ans.startswith("ERROR"):
         await update.message.reply_text("جواب الذكاء: " + ans)
-    else:
-        await update.message.reply_text("تأكد انك ضفت GROQ_KEY بالـ Secrets")
+        return
+    print("Groq failed, trying Pollinations")
+    ans2 = ask_pollinations(msg)
+    if ans2:
+        await update.message.reply_text("جواب الذكاء: " + ans2)
+        return
+    await update.message.reply_text("الخطأ الحقيقي: " + str(ans))
 
 app = ApplicationBuilder().token(TOKEN).build()
 app.add_handler(CommandHandler("start", start))
